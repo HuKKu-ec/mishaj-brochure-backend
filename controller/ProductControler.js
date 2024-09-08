@@ -7,7 +7,7 @@ const multer = require('multer');
 
 const AddProduct = async (req, res) => {
   try {
-    const { productId, category } = req.body;
+    const { productId, category, available_size_and_rate } = req.body;
     const files = [];
     for (let i = 0; i < req.files.length; i++) {
       const file = {
@@ -26,6 +26,7 @@ const AddProduct = async (req, res) => {
       productId,
       category,
       files,
+      available_size_and_rate: JSON.parse(available_size_and_rate),
     });
     res.status(200).json(product);
   } catch (error) {
@@ -41,7 +42,8 @@ const AddProduct = async (req, res) => {
 const GetAllProduct = async (req, res) => {
   try {
     const response = await ProductSchema.find();
-    res.status(200).json({ products: response });
+
+    res.status(200).json({ products: response.reverse() });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -88,7 +90,7 @@ const DeleteProduct = async (req, res) => {
 // dispaly one product details
 const DisplayOneProduct = async (req, res) => {
   try {
-    const { id } = req.params.id;
+    const { id } = req.params;
     const exist = await ProductSchema.findOne({ _id: id });
 
     if (exist) {
@@ -106,75 +108,122 @@ const DisplayOneProduct = async (req, res) => {
 // dispaly one product update
 const EditProduct = async (req, res) => {
   try {
-    const { id } = req.params.id;
-    const { productId, category } = req.body;
-    const existingProduct = await ProductSchema.findOne({ _id: id });
+    const { id } = req.params;
+    const { productId, category, currentFilenames, available_size_and_rate } =
+      req.body;
+    console.log(
+      `HERE: ${available_size_and_rate} ${typeof available_size_and_rate}`
+    );
 
-    if (existingProduct) {
-      let files = [];
-      if (req.files && req.files.length > 0) {
-        files = req.files.map((file) => ({
-          filename: file.filename,
-          originalname: file.originalname,
-          encoding: file.encoding,
-          mimetype: file.mimetype,
-          destination: file.destination,
-          path: file.path,
-          size: file.size,
-        }));
-      }
+    // Initialize parsedSizesAndRates as an empty array
+    let parsedSizesAndRates = [];
 
-      // Check if there are changes in product details
-      const isProductIdChanged = existingProduct.productId !== productId;
-      const isCategoryChanged = existingProduct.category !== category;
-
-      // Check if there are changes in files
-      const existingFiles = existingProduct.files || [];
-      const areFilesChanged =
-        JSON.stringify(existingFiles) !== JSON.stringify(files);
-
-      // Identify files to delete
-      const newFilePaths = files.map((file) => file.path);
-      const filesToDelete = existingFiles
-        .filter((file) => !newFilePaths.includes(file.path))
-        .map((file) => file.path);
-
-      if (isProductIdChanged || isCategoryChanged || areFilesChanged) {
-        // Delete old files that are not included in the new files list
-        filesToDelete.forEach((filePath) => {
-          if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
-          }
-        });
-
-        // Update product details
-        existingProduct.productId = productId;
-        existingProduct.category = category;
-        existingProduct.files = files;
-        const updatedProduct = await existingProduct.save();
-
-        res.status(200).json(updatedProduct);
-      } else {
-        res
-          .status(200)
-          .json({ message: 'No changes detected, nothing updated.' });
-      }
+    if (typeof available_size_and_rate === 'string') {
+      // Parse JSON string to object/array
+      const parsed = JSON.parse(available_size_and_rate);
+      parsedSizesAndRates = Array.isArray(parsed) ? parsed : [parsed];
+    } else if (Array.isArray(available_size_and_rate)) {
+      // Use array directly
+      parsedSizesAndRates = available_size_and_rate.map((item) =>
+        JSON.parse(item)
+      );
+    } else if (typeof available_size_and_rate === 'object') {
+      // Wrap single object in an array
+      parsedSizesAndRates = available_size_and_rate.map((item) =>
+        JSON.parse(item)
+      );
     } else {
-      res
-        .status(404)
-        .json({ error: 'Product not found.', message: 'Product not found.' });
+      throw new Error(
+        'available_size_and_rate should be an array, an object, or a valid JSON string.'
+      );
     }
+
+    console.log('Parsed Sizes and Rates:', parsedSizesAndRates);
+
+    // Validate productId and category
+    if (!productId || !category) {
+      return res.status(400).json({
+        error: 'productId and category are required fields.',
+        message: 'productId and category are required fields.',
+      });
+    }
+
+    // Initialize files array
+    let files = [];
+    if (req.files && req.files.length > 0) {
+      files = req.files.map((file) => ({
+        filename: file.filename,
+        originalname: file.originalname,
+        encoding: file.encoding,
+        mimetype: file.mimetype,
+        destination: file.destination,
+        path: file.path,
+        size: file.size,
+      }));
+    }
+
+    // Fetch the existing product
+    const existingProduct = await ProductSchema.findById(id);
+    if (!existingProduct) {
+      return res.status(404).json({ error: 'Product not found.' });
+    }
+    const existingFiles = await existingProduct.files.filter((file) =>
+      currentFilenames.includes(file.filename)
+    );
+    const filesToDelete = await existingProduct.files.filter(
+      (file) => !currentFilenames.includes(file.filename)
+    );
+
+    if (existingFiles != false) {
+      await files.push(...existingFiles);
+    }
+    const updateFields = {
+      productId,
+      category,
+      available_size_and_rate: parsedSizesAndRates,
+      ...(files.length > 0 && { files }), // Update files only if new files are provided
+    };
+
+    const result = await ProductSchema.updateOne(
+      { _id: id },
+      { $set: updateFields }
+    );
+
+    if (result.nModified === 0) {
+      return res
+        .status(200)
+        .json({ message: 'No changes detected, nothing updated.' });
+    }
+
+    // Delete old files that are no longer used
+    await Promise.all(
+      filesToDelete.map(async (file) => {
+        if (fs.existsSync(file.path)) {
+          await fs.promises.unlink(file.path);
+        }
+      })
+    );
+
+    // Fetch the updated product
+    const updatedProduct = await ProductSchema.findById(id);
+    res.status(200).json(updatedProduct);
   } catch (error) {
     // Delete uploaded files in case of an error
     if (req.files && req.files.length > 0) {
-      req.files.forEach((file) => {
-        const filePath = path.join(file.destination, file.filename);
-        if (fs.existsSync(filePath)) {
-          fs.unlinkSync(filePath);
-        }
-      });
+      await Promise.all(
+        req.files.map(async (file) => {
+          const filePath = path.join(file.destination, file.filename);
+          if (fs.existsSync(filePath)) {
+            await fs.promises.unlink(filePath);
+          }
+        })
+      );
     }
-    res.status(400).json({ error, message: error.message });
+
+    console.error('Error during product update:', error);
+    res
+      .status(500)
+      .json({ error: 'Failed to update product', message: error.message });
   }
 };
 module.exports = {
