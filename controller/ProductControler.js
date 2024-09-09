@@ -111,9 +111,6 @@ const EditProduct = async (req, res) => {
     const { id } = req.params;
     const { productId, category, currentFilenames, available_size_and_rate } =
       req.body;
-    console.log(
-      `HERE: ${available_size_and_rate} ${typeof available_size_and_rate}`
-    );
 
     // Initialize parsedSizesAndRates as an empty array
     let parsedSizesAndRates = [];
@@ -138,8 +135,6 @@ const EditProduct = async (req, res) => {
       );
     }
 
-    console.log('Parsed Sizes and Rates:', parsedSizesAndRates);
-
     // Validate productId and category
     if (!productId || !category) {
       return res.status(400).json({
@@ -150,6 +145,8 @@ const EditProduct = async (req, res) => {
 
     // Initialize files array
     let files = [];
+    console.log('TYPE CHECK ' + typeof req.files);
+
     if (req.files && req.files.length > 0) {
       files = req.files.map((file) => ({
         filename: file.filename,
@@ -161,6 +158,8 @@ const EditProduct = async (req, res) => {
         size: file.size,
       }));
     }
+    console.log(files);
+    console.log(currentFilenames);
 
     // Fetch the existing product
     const existingProduct = await ProductSchema.findById(id);
