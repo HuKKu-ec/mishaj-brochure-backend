@@ -40,12 +40,44 @@ const AddProduct = async (req, res) => {
 };
 //get all product function
 const GetAllProduct = async (req, res) => {
-  try {
-    const response = await ProductSchema.find();
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const category = req.query.cate || 'All';
+  const searchQuery = req.query.searchQuery || '';
 
-    res.status(200).json({ products: response.reverse() });
+  // Construct the query object
+  let query = {};
+  if (category !== 'All') {
+    query.category = category;
+  }
+
+  if (searchQuery) {
+    // Use a regular expression to perform a case-insensitive search
+    query.$or = [
+      {
+        productId: { $regex: searchQuery, $options: 'i' },
+      },
+    ];
+  }
+
+  try {
+    // Get total count of matching documents
+    const totalProducts = await ProductSchema.countDocuments(query);
+    const totalPages = Math.ceil(totalProducts / limit);
+
+    // Get products with pagination
+    const products = await ProductSchema.find(query)
+      .skip((page - 1) * limit)
+      .limit(limit);
+
+    res.json({
+      products,
+      totalPages,
+      totalProducts,
+    });
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    console.error(error);
+    res.status(500).json({ error: 'Server error' });
   }
 };
 
